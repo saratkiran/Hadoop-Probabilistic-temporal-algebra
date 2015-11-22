@@ -20,4 +20,5 @@ Steps involved to achieve this:
 				        After we have these values we emit into the reduce function with key as each comparison (event1 > event2, event1 <event2, ...) and value as calculated. mapreduce map step and add them. 
 					4. Second Mapreduce – reduce : Here we add the values emitted from the second.
 					
-		3. We finally get the values for each comparison of the event and the values will give us the probability of one event coming before other. Map reduce take care of few things we need to worry about it including things on splitting big files into smaller files, merging them together, the way they are sorted and ordered according to the key .etc..,
+		3. We finally get the values for each comparison of the event and the values will give us the probability of one event coming before other. 
+		Map reduce take care of few things we need to worry about it including things on splitting big files into smaller files, merging them together, the way they are sorted and ordered according to the key .etc..,
