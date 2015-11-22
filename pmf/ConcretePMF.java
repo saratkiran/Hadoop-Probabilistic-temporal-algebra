@@ -1,0 +1,317 @@
+package tzamanhadoop.pmf;
+
+import java.util.BitSet;
+import java.util.HashMap;
+
+
+/**
+* The <code>ConcretePMF</code> class is an implementation of <code>ProbabilityMassFunction</code>
+* for non-uniform distributions.
+* 
+* For a <code>ConcretePMF</code>, the higher the precision, the more space is required. 
+* The space required is bounded above by <I>8 * precision + coarseness / 4</I> bytes. 
+*
+* @author  Curtis Dyreson, Alex Henniges, and Richard Snodgrass
+* @version 2.0, Sep/9/2008
+* @see     tauzaman.timestamp.Granule
+**/
+public class ConcretePMF extends ProbabilityMassFunction {
+	private ProbabilityTree tree;
+	
+	/**
+	 * Constructs a <code>ConcretePMF</code> with the given precision and coarseness
+	 * that approximates the given mass function.
+	 * 
+	 * @param precision -
+	 * The precision of the ProbabilityMassFunction.
+	 * @param coarseness -
+	 * The coarseness of the ProbabilitMassFunction.
+	 * @param massFunction -
+	 * The mass function to approximate.
+	 */
+	protected ConcretePMF(int precision, int coarseness, float[] massFunction) {
+		this.precision = precision;
+		this.coarseness = coarseness;
+		buildTree(massFunction);
+	}
+	
+	/**
+	 * Returns the partial mass accumulated from the beginning of the domain 
+	 * to the left of the specified coarseness point.
+	 * 
+	 * @param coarseness
+	 * 	The coarseness point whose partial mass is being determined. Employs a 
+	 *  0-based indexing, so valid  values for coarseness point are from 
+	 *  <I>0</I> to <I> maxCoarseness - 1</I> inclusive.
+	 * @return
+	 *  Partial mass to the left of the coarseness point as a 0-based index.
+	 */
+	public int getPrecision(int coarseness) {
+		return tree.getLeftRods(coarseness);
+	}
+	
+	/**
+	 * Returns the greatest coarseness point for the rod corresponding to 
+	 * the given partial mass. 
+	 * 
+	 * @param partialMass
+	 * 	The amount of mass to the left of the desired coarseness point. Employs a
+	 *  0-based indexing, so valid values for partial mass are from 
+	 *  <I>0</I> to <I>maxPrecision - 1</I> inclusive. So 0 is <I>0 / P</I>
+	 *  mass and 1 is <I>1 / P</I> mass.
+	 * @return
+	 *  A coarseness point where the mass up to that point
+	 *  is equal to <code>partialMass</code>.
+	 */
+	public int getCoarseness(int partialMass) {
+		return tree.search(partialMass);
+	}
+	
+	private void buildTree(float[] massFunction) {
+		/* Scale the mass function */
+		float totalMassSum = 0;
+		
+		int length = massFunction.length;
+
+		/* Determine the mass at each coarseness point */
+		float[] coarsenessFunction = new float[coarseness];
+		int low = 0;
+		int high = 1;
+		for (int i = 1; i < (2 * coarseness); i += 2) {
+			/* Use trapezoidal rule to get the mass of the sample point */
+			float value = i / ((float)2 * coarseness) ;
+			float mfValue = (2*high + 1) / ((float)2 * length);
+			if (mfValue <= value) { // Explained below.
+			   if(mfValue == value) {
+			     low++;
+ 			   } else if(high != length - 1) {
+				low = high;
+				high++;
+			   }
+			}
+
+			/*
+			 * The samplePointMass is calculated by finding the slope between
+			 * the two massFunction elements surrounding the sample point, then
+			 * translating the slope beginning at the x-value of low to the
+			 * origin, and finally re-translating by adding to the mass value of
+			 * low the value found at i/2C.
+			 * 
+			 * For example, take a mass function with 10 points. Then the points
+			 * are 0.05, 0.15, ... , 0.95 along the x-axis. So 0 = 0/10 + 1/20
+			 * and 1 = 1/10 + 1/20, etc. Take the coarseness to be 20. Then for
+			 * i = 3 we have 3/40 * 10 = 0.75. So low = 0 and high = 1, thus
+			 * 0.05 < 0.075 < 0.15. Given a slope of, say, 2, we get 2 * (0.075 -
+			 * 0.05) + massFunction[low].
+			 * 
+			 * There are several other useful functions this method provides. In
+			 * the preceding example, i = 1 and i = 39 have only one adjacent
+			 * point on the mass function. The formula handles this for us
+			 * (after a simple shift for high = length). Also, if a i/2C lands
+			 * on a sample point, low = high = 1/2C. Again, the formula handles
+			 * this as the equation becomes 
+			 * 	samplePointMass = 0 + massFunction[low], which is the desired result.
+			 */
+
+			// The difference between two points is 1/length
+			float slope = (massFunction[high] - massFunction[low]) * length;
+			
+			float samplePointMass = slope
+					* (value - (2*low + 1)/((float)2 * length))
+					+ massFunction[low];
+			coarsenessFunction[(i - 1) / 2] = samplePointMass;
+			totalMassSum += samplePointMass;
+		}
+		/* Determine number of sample points under each rod */
+		Rod[] rods = new Rod[precision];
+		for(int i = 0; i < rods.length; i++) {
+			rods[i] = new Rod();
+		}
+		float mass = totalMassSum / ((float) precision); // The target mass of each rod.
+		
+		int currentSamplePoint = 0;
+		float currentTotalSum = 0;
+		for (int i = 0; i < rods.length; i++) {
+			float sumOfCurrentRods = (i + 1) * mass;
+			boolean finishedWithRod = false;
+			while (!finishedWithRod) {
+				if(currentSamplePoint >= coarsenessFunction.length) {
+					break;
+				}
+				float tempSum = currentTotalSum + coarsenessFunction[currentSamplePoint];
+				if(Math.abs(tempSum - sumOfCurrentRods) < Math.abs(currentTotalSum - sumOfCurrentRods)) {
+					currentTotalSum = tempSum;
+					currentSamplePoint++;
+					rods[i].samplePoints += 1;
+				} else {
+					finishedWithRod = true;
+				}
+			}
+		}
+		tree = new ProbabilityTree(coarseness, rods);
+	}
+	
+	/*
+	 * A simple container class for a Rod, representing the number of sample
+	 * points under it.
+	 */
+	private class Rod {
+		int samplePoints; // number of sample points contained in the rod.
+	}
+
+	/*
+	 * The ProbabilityTree is a binary tree used to approximate the mass
+	 * function. Each leaf (the nodes with no children) represents a sample
+	 * point, of which there are C=coarseness points. Each of these sample
+	 * points has a left and right int indicating the number of rods to the left
+	 * and to the right of that point. The rod which is the point is under is
+	 * not counted in either the left or right sum. After initially being
+	 * constructed, the ProbabilityTree is "pruned", wherein two adjacent points
+	 * with the same left and right sums is condensed into one "super point".
+	 * The current implementation depends on C being a power of 2.
+	 */
+	private class ProbabilityTree {
+		private int[] leftRods;
+		private BitSet leafBit;
+		private int coarseness;
+		private HashMap<Integer, Integer> indexMap;
+		
+		public ProbabilityTree(int coarseness, Rod[] rods) {
+			this.coarseness = coarseness;
+			leftRods = new int[2 * coarseness - 1]; // 2 * coarseness - 1 is the number of nodes in the tree.
+			leafBit = new BitSet(2* coarseness - 1);
+			// Sets the second half of the bit set to true.
+			leafBit.set(coarseness - 1, 2 * (coarseness) - 1);
+			indexMap = new HashMap<Integer, Integer>();
+			setRods(rods);
+			pruneTree();
+		}
+		private int currentRod;
+		private int pointsToAdd;
+		private void setRods(Rod[] rods) {
+			currentRod = 0;
+			pointsToAdd = rods[currentRod].samplePoints;
+			int currentNode = 0;
+			setRodsHelper(rods, currentNode);
+		}
+		
+		private void setRodsHelper(Rod[] rods, int currentNode) {
+			if(leafBit.get(currentNode)) {
+				leftRods[currentNode] = currentRod;
+				pointsToAdd--;
+				if(pointsToAdd == 0) {
+					currentRod++;
+					if(currentRod < rods.length)
+						pointsToAdd = rods[currentRod].samplePoints;
+				}
+			} else {
+				setRodsHelper(rods, left(currentNode));
+				setRodsHelper(rods, right(currentNode));
+			}
+		}
+		private void pruneTree() {
+			if(leafBit.length() == 1) return;
+			int currentNode = 0;
+			pruneTreeHelper(currentNode);
+			int numOfLeaves = leafBit.cardinality();
+			int[] tempLeftRods = new int[numOfLeaves];
+			int leaf = -1;
+			for(int i = 0; i < numOfLeaves; i++) {
+				leaf = leafBit.nextSetBit(leaf + 1);
+				tempLeftRods[i] = leftRods[leaf];
+				indexMap.put(leaf, i);
+			}
+			leftRods = tempLeftRods;
+		}
+		private void pruneTreeHelper(int currentNode) {
+			if(leafBit.get(left(currentNode))) {
+				// This is the parent of leaves.
+				if(leftRods[left(currentNode)] == leftRods[right(currentNode)]) {
+					leafBit.set(currentNode, true);
+					leftRods[currentNode] = leftRods[left(currentNode)];
+					leafBit.set(left(currentNode), false);
+					leafBit.set(right(currentNode), false);
+				} else{}
+			} else {
+				pruneTreeHelper(left(currentNode));
+				pruneTreeHelper(right(currentNode));
+				if(leafBit.get(left(currentNode)) && leafBit.get(right(currentNode))) {
+					if(leftRods[left(currentNode)] == leftRods[right(currentNode)]) {
+						leafBit.set(currentNode);
+						leftRods[currentNode] = leftRods[left(currentNode)];
+						leafBit.set(left(currentNode), false);
+						leafBit.set(right(currentNode), false);
+					}
+				}
+			}
+		}
+		private int left(int node) {
+			return node * 2 + 1;
+		}
+		private int right(int node) {
+			return node * 2 + 2;
+		}
+		public int search(int rod) {
+			int index = findMaxIndex(0, coarseness - 1, rod);
+			if(index < 0) {
+				return -1;
+			}
+			// Return which sample point it is, 0-based index. 
+			return index;
+		}
+		private int findMaxIndex(int leftIndex, int rightIndex, int rod) {
+			if(leftIndex > rightIndex || rightIndex < leftIndex) {
+				return -1;
+			}
+			int mid = (leftIndex + rightIndex) / 2;
+			int leftRod = getLeftRods(mid);
+			if(leftRod == rod ) {
+				if(getLeftRods(mid + 1) == rod) {
+					return findMaxIndex(mid + 1, rightIndex, rod);
+				}
+				else return mid;
+			}
+			else if(leftRod < rod) {
+				return findMaxIndex(mid + 1, rightIndex, rod);
+			} else {
+				return findMaxIndex(leftIndex, mid - 1, rod);
+			}
+		}
+		
+		public int getLeftRods(int index) {
+			index += coarseness - 1;
+			while(!leafBit.get(index)) {
+					index = (index - 1) /2;
+			}
+			int leftRodsIndex = indexMap.get(index);
+			return leftRods[leftRodsIndex];
+		}
+		public String toString() {
+			String result = "";
+			int rodsIndex = 0;
+			int numTabs = coarseness;
+			int levelThresh = 1;
+			for(int i =0; i < 2 * coarseness - 1; i++) {
+				if(i >= levelThresh) {
+					result += "\n";
+					numTabs >>= 1;
+					levelThresh <<= 1;
+					levelThresh++;
+				}
+				for(int j = 0; j < numTabs; j++) {
+					result += "\t";
+				}
+				if(leafBit.get(i)) {
+					result += leftRods[rodsIndex] + "|" + (getMaxPrecision() - leftRods[rodsIndex] - 1);
+					rodsIndex++;
+				} else {
+					result += "(O)";
+				}
+				for(int j = 0; j < numTabs; j++) {
+					result += "\t";
+				}
+			}
+			return result;
+		}
+	}
+}
