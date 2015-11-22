@@ -9,6 +9,7 @@ Each event is divided into rods using probabilistic mass function (PMF) accordin
 Things learned – Hadoop, map reduce, joins in map reduce, Ubuntu – linux. 
 
 Steps involved to achieve this: 
+
 		1. Divide the rods according to the PMF function. We would need the following information – start time, end time, event name, rod number and total number of rods for each event. 
 			
 		2. The input for the map reduce function is start time, end time, event name, rod number and total number of rods for each rod. We get this from PMF function. 
